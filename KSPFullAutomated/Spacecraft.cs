@@ -20,29 +20,38 @@ namespace KSPFullAutomated
             Client = new Connection("ksp autopilot", address);
             UniversalTime = Client.AddStream(() => Client.SpaceCenter().UT);
         }
+        public static void SendVehicleToLaunchPad(string name)
+        {
+            Client.SpaceCenter().LaunchVesselFromVAB(name);
+        }
+        public static Spacecraft LaunchVehicleFromVAB(string name)
+        {
+            SendVehicleToLaunchPad(name);
+            return new Spacecraft(name);
+        }
         public Spacecraft(string name)
         {
-            _Vessel = Client.SpaceCenter().Vessels.First(p => p.Name == name);
-            var flight = _Vessel.Flight();
+            Ship = Client.SpaceCenter().Vessels.First(p => p.Name == name);
+            var flight = Ship.Flight();
             Altitude = Client.AddStream(() => flight.MeanAltitude);
         }
-        public void Engage() => _Vessel.AutoPilot.Engage();
-        public void Disengage() => _Vessel.AutoPilot.Disengage();
-        private Vessel _Vessel { get; set; }
-        private double ErrorMarigin { get; set; }
+        public void Engage() => Ship.AutoPilot.Engage();
+        public void Disengage() => Ship.AutoPilot.Disengage();
+        private Vessel Ship { get; set; }
+        private double ErrorMarigin { get; set; } = 0.1;
         private Stream<double> Altitude { get; set; }
         public void LaunchToOrbit(int desiredAltitude)
         {
             
             //ascent code
             double maxVelocity = 400;
-            _Vessel.Control.Throttle = 1;
+            Ship.Control.Throttle = 1;
             while (true)
             {
-                if (_Vessel.Orbit.ApoapsisAltitude >= desiredAltitude)
+                if (Ship.Orbit.ApoapsisAltitude >= desiredAltitude)
                 {
-                    _Vessel.Control.Throttle = 0;
-                    if (_Vessel.Orbit.Body.AtmosphereDepth < Altitude.Get())
+                    Ship.Control.Throttle = 0;
+                    if (Ship.Orbit.Body.AtmosphereDepth < Altitude.Get())
                         break;
                 }
                 else
@@ -58,39 +67,51 @@ namespace KSPFullAutomated
                         WriteLine("Max Velocity = " + maxVelocity);
                     }
 
-                    _Vessel.AutoPilot.TargetPitchAndHeading((float)(90 * (1 - _Vessel.Orbit.ApoapsisAltitude / desiredAltitude)), 90);
+                    Ship.AutoPilot.TargetPitchAndHeading((float)(90 * (1 - Ship.Orbit.ApoapsisAltitude / desiredAltitude)), 90);
 
                     //System.Diagnostics.Debug.WriteLine("Pitch = " + (float)(90 * (1 - Altitude.Get() / desiredAltitude)) + ", Error = " + _Vessel.AutoPilot.Error);
-                    var v = _Vessel.Velocity(_Vessel.Orbit.Body.ReferenceFrame);
+                    var v = Ship.Velocity(Ship.Orbit.Body.ReferenceFrame);
                     //WriteLine("Speed = " + Math.Sqrt(v.Item1 * v.Item1 + v.Item2 * v.Item2 + v.Item3 * v.Item3));
-                    _Vessel.Control.Throttle += (float)(0.01*(maxVelocity - Math.Sqrt(v.Item1 * v.Item1 + v.Item2 * v.Item2 + v.Item3 * v.Item3)));
+                    Ship.Control.Throttle += (float)(0.01*(maxVelocity - Math.Sqrt(v.Item1 * v.Item1 + v.Item2 * v.Item2 + v.Item3 * v.Item3)));
                     System.Threading.Thread.Sleep(StandardDelay);
                     CheckStage();
                 }
             }
             //bring up the periapsis
             WriteLine("Bringing up the pariapsis");
-            _Vessel.AutoPilot.ReferenceFrame = _Vessel.OrbitalReferenceFrame;
-            var node = CreateNode(Elements.Periapsis, desiredAltitude + _Vessel.Orbit.Body.EquatorialRadius);
+            Ship.AutoPilot.ReferenceFrame = Ship.OrbitalReferenceFrame;
+            var node = CreateNode(Elements.Periapsis, desiredAltitude + Ship.Orbit.Body.EquatorialRadius);
             WriteLine("DeltaV = " + node.Prograde);
-            ExecuteManuverNode(node, 10, 50);
+            ExecuteManuverNode(node, 10, ErrorMarigin);
             node.Remove();
             //calling circularize method
             WriteLine("Circularizing");
             Circularize(desiredAltitude);
         }
+        /// <summary>
+        /// Hohmann Transfer
+        /// </summary>
+        /// <param name="desiredAltitude"></param>
+        /// <param name="deltaVErrorMarigin"></param>
+        private void ChangeAltitude(double desiredAltitude, double deltaVErrorMarigin = 0.5)
+        {
+            Node node = CreateNode(Elements.Apoapsis, desiredAltitude);
+            ExecuteManuverNode(node, 0.1, deltaVErrorMarigin);
+            node = CreateNode(Elements.Periapsis, desiredAltitude);
+            ExecuteManuverNode(node, 0.1, deltaVErrorMarigin);
+        }
         private void Circularize(double desiredAltitude, int maxManuvers = 3)
         {
             for(int i = 0; i < maxManuvers; i++)
             {
-                if (Math.Abs(_Vessel.Orbit.Apoapsis - desiredAltitude - _Vessel.Orbit.Body.EquatorialRadius) <= ErrorMarigin && 
-                    Math.Abs(_Vessel.Orbit.Periapsis - desiredAltitude- _Vessel.Orbit.Body.EquatorialRadius) <= ErrorMarigin)
+                if (Math.Abs(Ship.Orbit.Apoapsis - desiredAltitude - Ship.Orbit.Body.EquatorialRadius) <= ErrorMarigin && 
+                    Math.Abs(Ship.Orbit.Periapsis - desiredAltitude- Ship.Orbit.Body.EquatorialRadius) <= ErrorMarigin)
                     return;
-                var node = CreateNode(Elements.Periapsis, desiredAltitude + _Vessel.Orbit.Body.EquatorialRadius);
+                var node = CreateNode(Elements.Periapsis, desiredAltitude + Ship.Orbit.Body.EquatorialRadius);
                 ExecuteManuverNode(node, 3);
                 node.Remove();
 
-                node = CreateNode(Elements.Apoapsis, desiredAltitude + _Vessel.Orbit.Body.EquatorialRadius);
+                node = CreateNode(Elements.Apoapsis, desiredAltitude + Ship.Orbit.Body.EquatorialRadius);
                 ExecuteManuverNode(node, 3);
                 node.Remove();
             }
@@ -102,9 +123,9 @@ namespace KSPFullAutomated
         /// <returns></returns>
         private double VelocityAtRadius(double radius) =>
             Math.Sqrt(
-                _Vessel.Orbit.Body.GravitationalParameter * 
-                (2 / radius - 1 / _Vessel.Orbit.SemiMajorAxis));
-        double VisaVersaEquation(double r, double a) => Math.Sqrt(_Vessel.Orbit.Body.GravitationalParameter * (2 / r - 1 / a));
+                Ship.Orbit.Body.GravitationalParameter * 
+                (2 / radius - 1 / Ship.Orbit.SemiMajorAxis));
+        double VisaVersaEquation(double r, double a) => Math.Sqrt(Ship.Orbit.Body.GravitationalParameter * (2 / r - 1 / a));
         enum Elements
         {
             Apoapsis = 0,
@@ -116,17 +137,17 @@ namespace KSPFullAutomated
             {
                 case Elements.Apoapsis:
                     {
-                        return _Vessel.Control.AddNode(
-                            _Vessel.Orbit.TimeToPeriapsis + UniversalTime.Get(),
-                            (float)(VisaVersaEquation(_Vessel.Orbit.Periapsis, (_Vessel.Orbit.Periapsis + newValue) / 2)
-                                - VelocityAtRadius(_Vessel.Orbit.Periapsis)));
+                        return Ship.Control.AddNode(
+                            Ship.Orbit.TimeToPeriapsis + UniversalTime.Get(),
+                            (float)(VisaVersaEquation(Ship.Orbit.Periapsis, (Ship.Orbit.Periapsis + newValue) / 2)
+                                - VelocityAtRadius(Ship.Orbit.Periapsis)));
                     }
                 case Elements.Periapsis:
                     {
-                        return _Vessel.Control.AddNode(
-                            _Vessel.Orbit.TimeToApoapsis + UniversalTime.Get(),
-                            (float)(VisaVersaEquation(_Vessel.Orbit.Apoapsis, (_Vessel.Orbit.Apoapsis + newValue) / 2)
-                                - VelocityAtRadius(_Vessel.Orbit.Apoapsis)));
+                        return Ship.Control.AddNode(
+                            Ship.Orbit.TimeToApoapsis + UniversalTime.Get(),
+                            (float)(VisaVersaEquation(Ship.Orbit.Apoapsis, (Ship.Orbit.Apoapsis + newValue) / 2)
+                                - VelocityAtRadius(Ship.Orbit.Apoapsis)));
                     }
                 default: throw new NotImplementedException();
             }
@@ -153,8 +174,8 @@ namespace KSPFullAutomated
         }
         void CheckStage()
         {
-            if (_Vessel.Thrust == 0 && _Vessel.Control.Throttle > 0)
-                _Vessel.Control.ActivateNextStage();
+            if (Ship.Thrust == 0 && Ship.Control.Throttle > 0)
+                Ship.Control.ActivateNextStage();
         }
         /// <summary>
         /// executes 'node,' does NOT delete 'node'
@@ -164,10 +185,10 @@ namespace KSPFullAutomated
         void ExecuteManuverNode(Node node, double burnAngleErrMarigin, double deltaVErrMarigin = 0.1)
         {
             //telling the autopilot to point the spacecraft at the node
-            _Vessel.AutoPilot.TargetDirection = node.BurnVector();
+            Ship.AutoPilot.TargetDirection = node.BurnVector();
 
             //weighting for the vessel to be pointed at the node
-            while (_Vessel.AutoPilot.Error > burnAngleErrMarigin)
+            while (Ship.AutoPilot.Error > burnAngleErrMarigin)
                 System.Threading.Thread.Sleep(StandardDelay);
 
             //warping to the manuver
@@ -176,25 +197,25 @@ namespace KSPFullAutomated
             //executing the manuver
             while (node.RemainingDeltaV > deltaVErrMarigin)
             {
-                _Vessel.AutoPilot.TargetDirection = node.RemainingBurnVector(_Vessel.OrbitalReferenceFrame);
-                if (_Vessel.AutoPilot.Error <= burnAngleErrMarigin)
+                Ship.AutoPilot.TargetDirection = node.RemainingBurnVector(Ship.OrbitalReferenceFrame);
+                if (Ship.AutoPilot.Error <= burnAngleErrMarigin)
                 {
                     if (node.RemainingDeltaV >= 100)
                     {
-                        _Vessel.Control.Throttle = 1;
+                        Ship.Control.Throttle = 1;
                     }
                     else
                     {
-                        _Vessel.Control.Throttle = (float)(node.RemainingDeltaV / 100);
+                        Ship.Control.Throttle = (float)(node.RemainingDeltaV / 100);
                     }
                 }
                 else
-                    _Vessel.Control.Throttle = 0;
+                    Ship.Control.Throttle = 0;
                 CheckStage();
                 System.Threading.Thread.Sleep(StandardDelay);
                 WriteLine("Delta-V = " + node.RemainingDeltaV);
             }
-            _Vessel.Control.Throttle = 0;
+            Ship.Control.Throttle = 0;
         }
     }
 }
