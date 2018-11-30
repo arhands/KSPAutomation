@@ -40,6 +40,10 @@ namespace KSPFullAutomated
         private Vessel Ship { get; set; }
         private double ErrorMarigin { get; set; } = 0.1;
         private Stream<double> Altitude { get; set; }
+        /// <summary>
+        /// this will launch a landed vehicle to orbit
+        /// </summary>
+        /// <param name="desiredAltitude"></param>
         public void LaunchToOrbit(int desiredAltitude)
         {
             
